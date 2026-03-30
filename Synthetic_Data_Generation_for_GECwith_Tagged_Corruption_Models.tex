@@ -1,0 +1,316 @@
+\documentclass[aspectratio=169]{beamer}
+
+% ── Theme ────────────────────────────────────────────────────────────────────
+\usetheme{default}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+\setbeamertemplate{itemize items}[circle]
+
+\definecolor{mainblue}{RGB}{0,70,127}
+\definecolor{lightgray}{RGB}{245,245,245}
+\setbeamercolor{frametitle}{fg=mainblue}
+\setbeamercolor{title}{fg=mainblue}
+\setbeamercolor{itemize item}{fg=mainblue}
+\setbeamercolor{itemize subitem}{fg=mainblue}
+\setbeamerfont{frametitle}{size=\large, series=\bfseries}
+
+% ── Packages ─────────────────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{xcolor}
+
+\newcommand{\fhalf}{F\textsubscript{0.5}}
+\newcommand{\errtag}[1]{\texttt{#1}}
+
+% ── Metadata ─────────────────────────────────────────────────────────────────
+\title{Synthetic Data Generation for GEC\\with Tagged Corruption Models}
+\author{Autors: Stahlberg \& Kumar \\ \small Google Research}
+\date{Paper from: BEA Workshop, ACL 2021}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{document}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% ── MOTIVATION ───────────────────────────────────────────────────────────────
+
+\begin{frame}{The Problem}
+  GEC systems need parallel data: \textit{ungrammatical} $\to$ \textit{grammatical}.\\[1em]
+  Real annotated data is scarce, so we generate it synthetically.\\[1em]
+  \textbf{But existing methods produce simplistic, repetitive errors} that don't
+  reflect the range of mistakes real writers make.
+\end{frame}
+
+\begin{frame}{The Idea}
+  Condition the corruption model on an \textbf{error type tag}:
+
+  \vspace{1.5em}
+  \begin{center}
+    \large
+    \errtag{NOUN:INFL} + \textit{``There were a lot of sheep.''}\\[0.8em]
+    $\downarrow$\\[0.8em]
+    \textit{``There were a lot of \textbf{sheeps}.''}
+  \end{center}
+
+  \vspace{1.5em}
+  Tags come from ERRANT: an automatic error annotation tool with 25 categories.
+\end{frame}
+
+% What is ERRANT
+\begin{frame}{What is ERRANT?}
+  ERRANT (ERRor ANnotation Toolkit) is an automatic tool for annotating
+  grammatical errors in parallel text (original + corrected sentence pairs).\\[1.5em]
+
+  \textbf{What it does:}
+  \begin{itemize}
+    \item Aligns the original and corrected sentences at the token level
+    \item Identifies the spans that were changed
+    \item Assigns each change an error type tag from a fixed taxonomy of 25 categories
+  \end{itemize}
+
+  \vspace{1em}
+  \textbf{Example tags:}
+  \begin{itemize}
+    \item \errtag{VERB:SVA} — subject-verb agreement error
+    \item \errtag{NOUN:INFL} — noun inflection error (\textit{sheeps} for \textit{sheep})
+    \item \errtag{DET} — missing or incorrect determiner
+    \item \errtag{SPELL} — spelling error
+  \end{itemize}
+
+  \vspace{1em}
+  In this paper, ERRANT serves two roles: training the corruption models
+  (by providing tagged examples) and evaluating GEC systems
+  (via span-based \fhalf\ scoring).
+\end{frame}
+
+
+% ── MODELS ───────────────────────────────────────────────────────────────────
+
+\begin{frame}{Two Corruption Model Variants}
+  \begin{description}
+    \item[Full-sequence Transformer] Tag prepended to the input.
+      Standard decoder generates the full corrupted sentence.\\[1em]
+    \item[Seq2Edits] Predicts span-level edits rather than full sequences.
+      Tags live on the \emph{output} tape.
+      Can be constrained at inference time using finite state transducers (FSTs)*
+      to force it to include a specific ERRANT error tag in its output during beam search
+  \end{description}
+
+  \vspace{1em}
+  Seq2Edits is a better fit: error type prediction is native to the model.\\
+  \vspace{1em}
+  *A Finite State Transducer (FST) is a computational model that reads an input sequence and produces an output sequence according to a fixed set of rules and states.
+\end{frame}
+
+% ── FST ──────────────────────────────────────────────────────────────────────
+
+\begin{frame}{Constraining Seq2Edits with FSTs}
+  At inference time, an FST constrains beam search to produce a specific tag.\\[1em]
+  Three variants tested (e.g., forcing \errtag{SPELL}):
+
+  \vspace{0.5em}
+  \begin{itemize}
+    \item \textbf{NoSigma}: output can \emph{only} contain \errtag{SPELL} or \errtag{SELF}
+    \item \textbf{PostSigma}: other tags allowed \emph{after} \errtag{SPELL} fires
+    \item \textbf{PrePostSigma}: other tags allowed before \emph{and} after
+  \end{itemize}
+
+  \vspace{1em}
+  PostSigma solves the \emph{garden-path problem}: beam search can commit
+  early to an incompatible error, making the target tag impossible to satisfy later.
+
+  \vspace{1em}
+  \textbf{In practice:} constrained decoding fails at scale.
+  Final system uses unconstrained tagged Seq2Edits.
+\end{frame}
+
+% ── DISTRIBUTION MATCHING ────────────────────────────────────────────────────
+
+\begin{frame}{Matching a Target Tag Distribution}
+  Goal: assign one tag per training sentence so the \emph{overall} tag frequencies
+  match a desired distribution $P^*(t)$ (e.g., from the development set).\\[1.5em]
+
+  Three methods compared:
+
+  \begin{itemize}
+    \item \textbf{Offline-Optimal}: min-cost flow optimisation. Maximises
+      corruption model score. Produces dull, systematic errors. $O(N|\mathcal{T}|)$.
+    \item \textbf{Offline-Probabilistic}: sample a tag, then find best-matching
+      sentences. $O(N|\mathcal{T}|)$.
+    \item \textbf{Online}: sample tag independently for each sentence on-the-fly.
+      $O(N)$. Scales to 200M sentences. \textbf{Best in practice.}
+  \end{itemize}
+
+  \vspace{1em}
+  Offline-Optimal underperforms because optimising model confidence
+  kills diversity: and diversity is what makes synthetic data useful.
+\end{frame}
+
+% ── RESULTS ──────────────────────────────────────────────────────────────────
+
+\begin{frame}{Tagged vs.\ Untagged: BEA-dev \fhalf}
+  \begin{center}
+  \begin{tabular}{lc}
+    \toprule
+    \textbf{Method} & \textbf{\fhalf} \\
+    \midrule
+    Seed model (no fine-tuning) & 33.7 \\
+    Fine-tune on real parallel data & 50.4 \\
+    \midrule
+    Untagged back-translation & 42.4 \\
+    Tagged Seq2Edits + Online & \textbf{48.0} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{1em}
+  Tagged corruption closes most of the gap to real data
+  without any real parallel source sentences.
+\end{frame}
+
+\begin{frame}{Adapting to Native English}
+  Native and non-native speakers make \emph{different} errors.
+  Natives write more punctuation (\errtag{PUNCT}) and spelling (\errtag{SPELL}) errors;
+  non-natives make more determiner (\errtag{DET}) errors.\\[1.5em]
+
+  \begin{center}
+  \begin{tabular}{lc}
+    \toprule
+    \textbf{Fine-tuning tag distribution} & \textbf{Native test \fhalf} \\
+    \midrule
+    Real parallel data & 42.1 \\
+    CEFR non-native (A/B/C) & $\sim$39 \\
+    \textbf{Native tag distribution} & \textbf{42.9} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{1em}
+  Matching the native error distribution with synthetic data
+  \textbf{surpasses real parallel data} on the native test set.
+\end{frame}
+
+% What is Beam Search
+\begin{frame}{What is Beam Search?}
+  Beam search is a decoding algorithm for sequence generation models.
+  At each step, it tracks the $k$ most probable partial sequences
+  (the \textit{beam}) and discards everything else.\\[1.5em]
+
+  \textbf{Example with beam width $k = 2$:}
+  \begin{itemize}
+    \item Step 1: model scores all possible next tokens, keeps top 2
+    \item Step 2: expands each surviving hypothesis, keeps top 2 overall
+    \item Continues until end-of-sequence, returns the highest-scoring result
+  \end{itemize}
+
+  \vspace{1em}
+  \textbf{The tradeoff:}
+  \begin{itemize}
+    \item $k = 1$ is greedy decoding: fast but short-sighted
+    \item Larger $k$ explores more of the search space but never the full distribution
+    \item The final output is always the \emph{mode} of the model's distribution,
+      not a sample from it
+  \end{itemize}
+
+  \vspace{1em}
+  Beam search is the standard decoding choice when you want the
+  single best output. It is less suitable when you want \emph{diversity},
+  because high-probability outputs tend to cluster around the same obvious answer.
+\end{frame}
+
+% BEAM Seach in SelexRT
+\begin{frame}{Beam Search: Two Different Roles}
+  In both systems, beam search is used during data generation.
+  But the goal is different in each case.\\[1.5em]
+
+  \textbf{Stahlberg \& Kumar: beam search hurts.}
+  \begin{itemize}
+    \item The corruption model is asked to realise a specific error type
+    \item Beam search collapses to the single most probable surface form
+    \item Every \errtag{VERB:SVA} corruption looks the same; the GEC model learns shortcuts
+    \item Sampling from the output distribution produces harder, more varied errors
+  \end{itemize}
+
+  \vspace{1em}
+  \textbf{SeLex-RT: beam search is fine.}
+  \begin{itemize}
+    \item Diversity comes from the pivot language matrix, not the decoder
+    \item Each pivot (bg, en, zh) induces a structurally different error profile
+    \item Within each pivot, you \emph{want} the cleanest possible translation
+    \item Noisy decoding would corrupt the signal, not enrich it
+  \end{itemize}
+
+  \vspace{1em}
+ \textit{Diversity in the synthetic data matters.}
+\end{frame}
+
+\begin{frame}{Sampling Beats Beam Search}
+  During data generation, \emph{how} you decode matters.\\[1em]
+
+  \begin{itemize}
+    \item \textbf{Beam search} finds the most probable corruption.
+      but the most probable error is also the most predictable one.
+      The GEC model learns surface shortcuts.\\[1em]
+    \item \textbf{Sampling} draws from the full output distribution,
+      producing rarer, harder errors.
+      The GEC model has to learn the underlying phenomenon.
+  \end{itemize}
+
+  \vspace{1em}
+  \begin{center}
+  \begin{tabular}{lcc}
+    \toprule
+    & \textbf{Beam search} & \textbf{Sampling} \\
+    \midrule
+    BEA-dev \fhalf & 52.9 & \textbf{54.7} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  Same principle as back-translation in MT (Edunov et al., 2018):
+  \emph{diversity trumps optimality.}
+\end{frame}
+
+\begin{frame}{C4\textsubscript{200M} and State of the Art}
+  Apply the tagged corruption pipeline to 200M sentences from C4.
+  Use the result as a pre-training corpus.\\[1.5em]
+
+  \begin{center}
+  \begin{tabular}{lcc}
+    \toprule
+    \textbf{System (ensemble)} & \textbf{BEA-test \fhalf} & \textbf{CoNLL-14 \fhalf} \\
+    \midrule
+    Lichtarge et al.\ (2020) & 73.0 & 66.8 \\
+    Omelianchuk et al.\ (2020) & 73.7 & 66.5 \\
+    \textbf{This work} & \textbf{74.9} & \textbf{68.3} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{1em}
+  SOTA achieved with \textbf{vanilla Transformers}.
+  All gains come from the synthetic pre-training data: no new architecture.
+\end{frame}
+
+% ── CONCLUSION ───────────────────────────────────────────────────────────────
+
+\begin{frame}{Summary}
+  \begin{itemize}
+    \item Conditioning corruption on \textbf{error type tags} produces
+      more realistic and diverse synthetic GEC data\\[0.8em]
+    \item \textbf{Matching the tag distribution} to a target domain enables
+      effective domain adaptation\\[0.8em]
+    \item Synthetic data with the \textbf{native error distribution}
+      outperforms real parallel data on native English\\[0.8em]
+    \item \textbf{Sampling} during generation beats beam search.
+      diversity matters more than optimality\\[0.8em]
+    \item C4\textsubscript{200M} sets SOTA on BEA-test and CoNLL-14
+      with no model architecture changes
+  \end{itemize}
+\end{frame}
+
+\end{document}

@@ -1,0 +1,254 @@
+\documentclass[aspectratio=169]{beamer}
+
+% -- Theme --------------------------------------------------------------------
+\usetheme{default}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+\setbeamertemplate{itemize items}[circle]
+
+\definecolor{mainblue}{RGB}{0,70,127}
+\setbeamercolor{frametitle}{fg=mainblue}
+\setbeamercolor{title}{fg=mainblue}
+\setbeamercolor{itemize item}{fg=mainblue}
+\setbeamercolor{itemize subitem}{fg=mainblue}
+\setbeamerfont{frametitle}{size=\large, series=\bfseries}
+
+% -- Packages -----------------------------------------------------------------
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{colortbl}
+
+\newcommand{\fhalf}{F\textsubscript{0.5}}
+\newcommand{\errtag}[1]{\texttt{#1}}
+
+% -- Metadata -----------------------------------------------------------------
+\title{Advancements in Arabic Grammatical Error\\
+Detection and Correction: An Empirical Investigation}
+\author{Authors: Alhafni, Inoue, Khairallah \& Habash \\ \small NYU Abu Dhabi}
+\date{Paper from: EMNLP 2023}
+
+% -----------------------------------------------------------------------------
+\begin{document}
+% -----------------------------------------------------------------------------
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% -- MOTIVATION ---------------------------------------------------------------
+
+\begin{frame}{Why Arabic GEC is Hard}
+  GEC research has focused almost entirely on English.
+  Arabic presents unique challenges:
+
+  \begin{itemize}
+    \item \textbf{Morphological richness:} Arabic inflects for gender, number,
+      person, case, mood, voice, and aspect, producing a very large vocabulary
+ \item \textbf{Two-tier language system:} Arabic has a formal written
+  standard and a range of spoken dialects that constantly mix together,
+  even in educated writing
+\item \textbf{Built-in spelling variation:} certain letter forms are
+  routinely confused even by native speakers, meaning what counts as
+  an ``error'' is not always clear-cut
+    \item \textbf{Punctuation:} punctuation errors make up 40\% of errors in
+      Arabic GEC data -- ten times higher than in English learner corpora
+    \item \textbf{Data scarcity:} existing Arabic GEC datasets have no
+      error type annotations, and training sets are tiny by English standards
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Three Contributions in One Paper}
+  \begin{itemize}
+    \item \textbf{First benchmark} of pretrained Seq2Seq Transformer models
+      on Arabic GEC across three datasets\\[1em]
+    \item \textbf{First multi-class Arabic GED results,} including a new
+      annotation pipeline to label error types in existing datasets
+      that have no type information\\[1em]
+    \item \textbf{Systematic study} of whether GED improves Arabic GEC,
+      including morphological preprocessing as an orthogonal intervention
+  \end{itemize}
+\end{frame}
+
+% -- DATA ---------------------------------------------------------------------
+
+\begin{frame}{Three Arabic GEC Datasets}
+  \begin{center}
+  \begin{tabular}{llll}
+    \toprule
+    \textbf{Dataset} & \textbf{Type} & \textbf{Domain} & \textbf{Training size} \\
+    \midrule
+    QALB-2014 & L1 (native) & News comments & 1M words \\
+    QALB-2015 & L2 (learner) & Essays & 43K words \\
+    ZAEBUC    & L1 (native) & University essays & 25K words \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{1em}
+  All three have roughly 25--30\% erroneous words.
+  None have manual error type annotations.
+  QALB-2015 and ZAEBUC are very small by GEC standards,
+  which constrains every architectural choice toward simplicity.
+\end{frame}
+
+% -- GED PIPELINE -------------------------------------------------------------
+
+\begin{frame}{Building an Arabic GED Pipeline}
+  No ERRANT equivalent exists for Arabic.
+  The paper builds one from scratch in two steps.\\[1.5em]
+
+  \textbf{Step 1: Edit extraction.}
+  Align erroneous and corrected sentence pairs to locate the edits.
+  Standard Levenshtein and the M2 scorer both fail on merge and split
+  operations. A new iterative algorithm greedily handles multi-token edits,
+  substantially outperforming all alternatives (AER 0.00 vs 0.10--0.16).\\[1em]
+
+  \textbf{Step 2: Error type annotation.}
+  Pass extracted edits to ARETA, an Arabic error type annotation tool for MSA.
+  ARETA's own alignment is replaced with the new algorithm to increase coverage.\\[1em]
+
+  Error types follow ARETA's taxonomy: orthography, morphology, syntax,
+  semantics, punctuation, merges, and splits -- at three granularity levels
+  (2-class, 13-class, 43-class).
+\end{frame}
+
+% -- GEC MODELS ---------------------------------------------------------------
+
+\begin{frame}{GEC Models: Baselines}
+  Four baselines are compared before introducing the main Seq2Seq models:
+
+  \begin{itemize}
+    \item \textbf{Morphological disambiguation (Morph):} CAMeL Tools
+      runs a morphological analyzer and disambiguator on the input,
+      producing spelling corrections, POS tags, and lemmas.
+      No training data needed.
+    \item \textbf{MLE:} A bigram lookup model that maps erroneous words
+      to corrections using the training data. Highest precision, low recall.
+    \item \textbf{ChatGPT (GPT-3.5):} 3-shot prompted. Highest recall of
+      the baselines but lower precision. 38\% of mismatches are
+      grammatically or lexically incorrect.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{GEC Models: Seq2Seq with GED}
+  Two pretrained Arabic Seq2Seq Transformers are the main models:
+
+  \begin{itemize}
+    \item \textbf{AraBART:} pretrained on 24GB of MSA data, mostly news
+    \item \textbf{AraT5:} pretrained on 256GB of MSA and Twitter data
+  \end{itemize}
+
+  \vspace{1em}
+  GED predictions are incorporated as a \textbf{token embedding layer}
+  summed with the standard token and positional embeddings before the
+  encoder's attention layers.\\[1em]
+
+  This is simpler than Yuan et al.'s second encoder approach.
+  With small training sets, not adding parameters matters:
+  a second encoder would risk overfitting.\\[1em]
+
+  Predicted (not gold) GED tags are used during training
+  to match the noise present at inference time.
+\end{frame}
+
+% -- RESULTS ------------------------------------------------------------------
+
+\begin{frame}{Does Morphological Preprocessing Help?}
+  Yes, consistently. Adding Morph improves \fhalf\ across MLE, AraT5,
+  and AraBART on most datasets.\\[1em]
+
+  The gains come almost entirely from \textbf{recall}.
+  Morph helps the model find more errors to fix,
+  at a small cost to precision.\\[1em]
+
+  The exception is QALB-2015-L2 where Morph has no effect or slightly
+  hurts -- the L2 error profile (more morphological and syntactic errors)
+  may not align well with what the morphological disambiguator corrects.
+\end{frame}
+
+\begin{frame}{Does GED Help Arabic GEC?}
+  Yes. Adding GED predictions as auxiliary input improves results
+  across all three datasets for both AraT5 and AraBART.
+  AraBART benefits more.\\[1em]
+
+  \begin{center}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{System} & \textbf{QALB-14} & \textbf{QALB-15} & \textbf{ZAEBUC} & \textbf{Avg.} \\
+    \midrule
+    AraBART & 78.7 & 61.2 & 83.4 & 74.4 \\
+    +Morph & 78.8 & 61.7 & 83.6 & 74.7 \\
+    +GED43 & 79.1 & 61.9 & 83.9 & 75.0 \\
+    \textbf{+Morph+GED43} & \textbf{79.3} & \textbf{62.4} & \textbf{84.2} & \textbf{75.3} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.5em}
+  As in English, improvements are driven by recall.
+  Combining Morph and GED gives the best results on average.
+\end{frame}
+
+\begin{frame}{GED Granularity: No Clear Winner}
+  Unlike Yuan et al., no single granularity level consistently wins.\\[1em]
+
+  \begin{center}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{GED granularity} & \textbf{QALB-14} & \textbf{QALB-15} & \textbf{ZAEBUC} & \textbf{Avg.} \\
+    \midrule
+    2-class & 79.1 & 61.9 & 82.9 & 74.6 \\
+    13-class & 79.4 & 62.3 & 84.5 & 75.4 \\
+    43-class & 79.3 & 62.4 & 84.2 & 75.3 \\
+    \midrule
+    43-class Oracle & 82.8 & 69.8 & 88.1 & 80.2 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.5em}
+  13-class edges out 43-class on average (75.4 vs 75.3).
+  The large oracle gap confirms the bottleneck is GED accuracy,
+  not model capacity or label granularity.
+\end{frame}
+
+\begin{frame}{State-of-the-Art Results}
+  The best system achieves SOTA on two of the three benchmarks.\\[1em]
+
+  \begin{center}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{System} & \textbf{QALB-14 F1} & \textbf{QALB-15-L2 F1} \\
+    \midrule
+    Watson et al.\ (2018) -- prior SOTA & 70.4 & 73.2 \\
+    Solyman et al.\ (2022) & 76.0 & -- \\
+    \textbf{AraBART+Morph+GED (this work)} & \textbf{79.5} & \textbf{77.1} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{1em}
+  Results on ZAEBUC establish a strong benchmark for future work
+  as no prior results exist on this dataset.
+\end{frame}
+
+% -- CONCLUSION ---------------------------------------------------------------
+
+\begin{frame}{Summary}
+  \begin{itemize}
+    \item A new edit extraction algorithm handles Arabic merge and split
+      operations, enabling reliable automatic error type annotation\\[0.8em]
+    \item Pretrained Seq2Seq models (AraBART, AraT5) substantially
+      outperform all prior Arabic GEC systems\\[0.8em]
+    \item GED improves Arabic GEC in the same way it improves English GEC,
+      mainly through recall gains\\[0.8em]
+    \item Morphological preprocessing and GED are complementary interventions\\[0.8em]
+    \item No single GED granularity wins across all datasets -- the bottleneck
+      is GED accuracy, not label richness\\[0.8em]
+    \item SOTA on QALB-2014 and QALB-2015; strong benchmark on ZAEBUC
+  \end{itemize}
+\end{frame}
+
+\end{document}

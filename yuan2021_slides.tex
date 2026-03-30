@@ -1,0 +1,278 @@
+\documentclass[aspectratio=169]{beamer}
+
+% -- Theme --------------------------------------------------------------------
+\usetheme{default}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+\setbeamertemplate{itemize items}[circle]
+
+\definecolor{mainblue}{RGB}{0,70,127}
+\setbeamercolor{frametitle}{fg=mainblue}
+\setbeamercolor{title}{fg=mainblue}
+\setbeamercolor{itemize item}{fg=mainblue}
+\setbeamercolor{itemize subitem}{fg=mainblue}
+\setbeamerfont{frametitle}{size=\large, series=\bfseries}
+
+% -- Packages -----------------------------------------------------------------
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{colortbl}
+
+\newcommand{\fhalf}{F\textsubscript{0.5}}
+\newcommand{\errtag}[1]{\texttt{#1}}
+
+% -- Metadata -----------------------------------------------------------------
+\title{Multi-Class Grammatical Error Detection for Correction:\\
+A Tale of Two Systems}
+\author{Authors: Yuan, Taslimipoor, Davis \& Bryant \\ \small University of Cambridge}
+\date{Paper from: EMNLP 2021}
+
+% -----------------------------------------------------------------------------
+\begin{document}
+% -----------------------------------------------------------------------------
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% -- MOTIVATION ---------------------------------------------------------------
+
+\begin{frame}{The Problem}
+  GEC systems correct errors but are blind to what \textit{kind} of error
+  they are dealing with.\\[1em]
+
+  GED (grammatical error detection) traditionally just flags tokens as
+  correct or incorrect -- a binary signal that throws away type information.\\[1em]
+
+  \textbf{Can richer, multi-class error type information improve GEC?}
+\end{frame}
+
+\begin{frame}{The Idea}
+  Train a GED system that predicts fine-grained error types,
+  not just correct vs.\ incorrect.\\[1.5em]
+
+  Feed those predictions into a GEC system in two ways:
+
+  \begin{itemize}
+    \item During \textbf{fine-tuning}: give the GEC model error type labels
+      as additional input
+    \item During \textbf{inference}: use GED predictions to re-rank
+      the GEC system's candidate outputs
+  \end{itemize}
+
+  \vspace{1em}
+  The two methods turn out to be complementary and are combined
+  in the final system.
+\end{frame}
+
+% -- GED SYSTEM ---------------------------------------------------------------
+
+\begin{frame}{The GED System: ELECTRA}
+  Three pre-trained models tested for binary GED: BERT, XLNet, ELECTRA.\\[1em]
+
+  ELECTRA performs best. Its pre-training objective -- distinguishing real
+  tokens from plausible replacements -- is conceptually close to GED.\\[1em]
+
+  Each model is fine-tuned with a linear classification layer on top,
+  treating GED as a token-level sequence labelling task.
+
+  \vspace{1em}
+  \begin{center}
+  \begin{tabular}{lcc}
+    \toprule
+    \textbf{Model} & \textbf{BEA-dev \fhalf} & \textbf{FCE-test \fhalf} \\
+    \midrule
+    Bell et al.\ (2019) -- prior SOTA & 48.50 & 57.28 \\
+    GED (BERT) & 59.23 & 67.88 \\
+    GED (XLNet) & 63.23 & 69.75 \\
+    \textbf{GED (ELECTRA)} & \textbf{65.54} & \textbf{72.93} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+\end{frame}
+
+\begin{frame}{Multi-Class GED: Four Levels of Granularity}
+  Using ERRANT's modular tag structure, ELECTRA is extended to predict
+  error types at three levels beyond binary:
+
+  \vspace{1em}
+  \begin{center}
+  \begin{tabular}{lll}
+    \toprule
+    \textbf{Setting} & \textbf{Classes} & \textbf{Example label} \\
+    \midrule
+    Binary   & 2  & \errtag{I} (incorrect) \\
+    4-class  & 4  & \errtag{M} (missing) \\
+    25-class & 25 & \errtag{VERB:TENSE} \\
+    55-class & 55 & \errtag{R:VERB:TENSE} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{1em}
+  Key finding: adding more classes barely affects \textit{binarised} detection
+  performance. The models detect roughly the same errors regardless of
+  granularity -- they just struggle to classify the specific type.
+\end{frame}
+
+% -- MULTI-ENCODER GEC --------------------------------------------------------
+
+\begin{frame}{Using GED as Auxiliary Input: Multi-Encoder GEC}
+  A second encoder is added to the standard Transformer encoder-decoder
+  GEC model. It processes GED predictions alongside the source sentence.\\[1em]
+
+  A gating mechanism blends the two encoder representations:
+  \[
+    \text{Gating}(\text{MH}) = \lambda \cdot \text{MH}_\text{src}
+    + (1 - \lambda) \cdot \text{MH}_\text{ged}
+  \]
+  where $\lambda$ is learned from the data.\\[1em]
+
+  \textbf{Two-step training:}
+  \begin{itemize}
+    \item Step 1: train the base GEC model on full parallel data as normal
+    \item Step 2: freeze the base model, train only the new GED components
+      on a smaller high-quality dataset with GED labels added
+  \end{itemize}
+
+  Freezing the base model prevents overfitting when the fine-tuning
+  set is much smaller than the pre-training set.
+\end{frame}
+
+\begin{frame}{Fine-Tuning Results: 4-Class Works Best}
+  Adding GED predictions as auxiliary input consistently improves over
+  the baseline. The 4-class system performs best.\\[1em]
+
+  \begin{center}
+  \begin{tabular}{lc}
+    \toprule
+    \textbf{System} & \textbf{BEA-dev \fhalf} \\
+    \midrule
+    Baseline (no GED) & 49.80 \\
+    \midrule
+    Binary GED & 52.20 \\
+    \textbf{4-class GED} & \textbf{52.84} \\
+    25-class GED & 51.78 \\
+    55-class GED & 51.52 \\
+    \midrule
+    55-class Oracle (upper bound) & 70.24 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.5em}
+  4-class wins because it strikes the best balance between
+  label informativeness and prediction reliability.
+  The large oracle gap shows the bottleneck is GED accuracy, not model capacity.
+\end{frame}
+
+% -- RE-RANKING ---------------------------------------------------------------
+
+\begin{frame}{Using GED for Re-Ranking}
+  At inference time, the GEC decoder produces a 10-best list of candidate
+  corrections. GED is used to pick the best one.\\[1.5em]
+
+  \textbf{Procedure:}
+  \begin{itemize}
+    \item Convert each candidate correction to token-level error labels
+      using ERRANT
+    \item Run the GED system on the source sentence to get predicted labels
+    \item Pick the hypothesis whose labels best agree with the GED predictions
+      (minimum Hamming distance)
+  \end{itemize}
+
+  \vspace{1em}
+  No GEC system scores or other features are used -- only GED predictions.
+  The method can be applied to output from any GEC system.
+\end{frame}
+
+\begin{frame}{Re-Ranking Results: 55-Class Works Best}
+  For re-ranking, more granular GED labels are better.
+  55-class outperforms all coarser alternatives.\\[1em]
+
+  \begin{center}
+  \begin{tabular}{lcc}
+    \toprule
+    \textbf{GED for re-ranking} & \textbf{BEA-dev \fhalf} \\
+    \midrule
+    Baseline (no re-ranking) & 49.80 \\
+    \midrule
+    Binary & 51.21 \\
+    4-class & 52.42 \\
+    25-class & 52.68 \\
+    \textbf{55-class} & \textbf{54.35} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.5em}
+  55-class labels are more discriminative between candidates,
+  even if noisier. For re-ranking, discrimination matters more
+  than reliability.
+\end{frame}
+
+\begin{frame}{Why Different Granularities Win in Different Roles}
+  The right level of detail depends on how the GED information is used.\\[1.5em]
+
+  \textbf{Fine-tuning (4-class wins):}
+  \begin{itemize}
+    \item Labels are baked into model weights during training
+    \item Noisy fine-grained labels corrupt the training signal
+    \item Coarser but reliable labels are more useful
+  \end{itemize}
+
+  \vspace{1em}
+  \textbf{Re-ranking (55-class wins):}
+  \begin{itemize}
+    \item Labels are used to compare candidate outputs at inference time
+    \item Fine-grained labels better discriminate between similar hypotheses
+    \item Noise matters less when you are choosing between options
+  \end{itemize}
+\end{frame}
+
+% -- FINAL RESULTS ------------------------------------------------------------
+
+\begin{frame}{Final System and State of the Art}
+  Combining 4-class fine-tuning and 55-class re-ranking gives further gains,
+  confirming the two methods are complementary.\\[1em]
+
+  \begin{center}
+  \begin{tabular}{lcc}
+    \toprule
+    \textbf{System (single model, unconstrained)} & \textbf{BEA-test \fhalf} & \textbf{CoNLL-14 \fhalf} \\
+    \midrule
+    Stahlberg \& Kumar (2021) & 70.4 & 66.6 \\
+    Kaneko et al.\ (2020) + GED & 65.6 & 62.6 \\
+    \midrule
+    Baseline (this work) & 65.1 & 59.4 \\
+    + Multi-encoder GEC & 67.6 & 62.7 \\
+    \textbf{+ GED re-ranking} & \textbf{70.6} & \textbf{63.5} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.5em}
+  New single-model NMT SOTA on BEA-test. Outperforms all prior systems
+  that combine GED and GEC.
+\end{frame}
+
+% -- CONCLUSION ---------------------------------------------------------------
+
+\begin{frame}{Summary}
+  \begin{itemize}
+    \item ELECTRA fine-tuned for GED sets a new binary detection SOTA and
+      extends naturally to multi-class\\[0.8em]
+    \item A multi-encoder GEC model with gated attention incorporates GED
+      predictions during fine-tuning\\[0.8em]
+    \item GED predictions also improve GEC as a post-hoc re-ranking signal\\[0.8em]
+    \item The two methods prefer different granularities: 4-class for
+      fine-tuning, 55-class for re-ranking\\[0.8em]
+    \item Oracle experiments show large headroom: the bottleneck is GED
+      accuracy, not model capacity\\[0.8em]
+    \item Combined system sets a new NMT SOTA on BEA-test
+  \end{itemize}
+\end{frame}
+
+\end{document}
