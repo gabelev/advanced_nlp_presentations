@@ -1,0 +1,122 @@
+
+SLIDE 2 — The Problem
+- Standard GEC is correction-only: the model sees a bad sentence and produces
+  a good one, but never explicitly reasons about what kind of error it's fixing.
+- Binary GED (correct vs. incorrect) has been the default for error detection,
+  but it throws away all type information — it's a one-bit signal.
+- The research question is whether the richer ERRANT taxonomy (25–55 classes)
+  can be injected back into GEC to improve correction quality.
+- This is directly relevant to your joint detection-correction architecture:
+  the paper gives empirical grounding for why detection signal helps correction.
+
+SLIDE 3 — The Idea
+- Two integration strategies, not one: (1) feed GED predictions to the GEC
+  model during fine-tuning as auxiliary input, (2) use GED at inference time
+  to re-rank the GEC beam's n-best list.
+- These operate at different points in the pipeline, which is why they turn
+  out to be complementary — they're not solving the same problem.
+- The setup is modular: GED is a separate system whose outputs are consumed
+  by GEC. Compare to your joint detection-correction head, which collapses
+  this into a single model.
+
+SLIDE 4 — The GED System: ELECTRA
+- Three pre-trained encoders benchmarked on binary GED: BERT, XLNet, ELECTRA.
+- ELECTRA's pre-training task (replaced token detection) is a near-perfect
+  conceptual match for GED — the model was already trained to ask "is this
+  token real or substituted?"
+- The F0.5 improvements over Bell et al. (2019) are large: +17 on BEA-dev,
+  +15.6 on FCE-test just from swapping the encoder.
+- Takeaway: pre-training objective alignment matters. ELECTRA isn't better
+  because it's larger — it's better because its inductive bias fits the task.
+
+SLIDE 5 — Multi-Class GED: Four Levels of Granularity
+- ERRANT's tag structure is hierarchical, so you get four granularity levels
+  essentially for free: binary, 4-class (operation type), 25-class (ERRANT
+  category), 55-class (operation + category combined).
+- The key finding: detection performance is roughly stable across granularities.
+  The model finds the same errors regardless of how many classes it's asked to
+  predict — the hard part is classification, not localization.
+- This is an important diagnostic: it means the bottleneck for multi-class GED
+  is label accuracy, not the model's ability to find errors in the first place.
+- Relevant to your work: if you're evaluating your joint head on detection
+  alone (binary F0.5), you should see similar ceiling behavior.
+
+SLIDE 6 — Using GED as Auxiliary Input: Multi-Encoder GEC
+- Architecture: standard encoder-decoder GEC model + a second encoder that
+  processes GED predictions. A learned gating parameter λ blends the two.
+- Two-step training is the practical key: train base GEC on full data first,
+  then freeze it and train only the GED-aware components on a smaller
+  high-quality set. This prevents catastrophic forgetting and overfitting.
+- The gating mechanism is simple but principled — λ is learned, so the model
+  figures out how much to trust the GED signal on a per-position basis.
+- For your architecture: this is the main precedent for a joint
+  detection-correction model. The difference is that you're fusing the signals
+  inside a single encoder rather than via a second encoder + gate.
+
+SLIDE 7 — Fine-Tuning Results: 4-Class Works Best
+- 4-class GED auxiliary input gives +3.04 F0.5 over no GED (49.80 → 52.84).
+  Binary gives +2.40. More granular classes actually hurt.
+- The oracle result (70.24 with perfect GED labels) reveals a massive headroom
+  gap — the model capacity is fine, the bottleneck is GED label noise.
+- Why does 4-class win over 25-class? Coarser labels are more reliably
+  predicted, so the GEC model gets a cleaner training signal even if it's
+  less informative.
+- This is a direct design implication for your joint head: if you're using
+  detection signal during training, consider whether your 11-class output
+  is reliable enough to help, or whether coarser groupings might work better.
+
+SLIDE 8 — Using GED for Re-Ranking
+- At inference time, generate a 10-best list from GEC, then score each
+  hypothesis by how well its ERRANT-derived labels agree with GED predictions
+  (minimum Hamming distance).
+- No GEC scores are used at all — the re-ranker is purely GED-driven.
+  That makes it fully model-agnostic: you can bolt it onto any GEC system.
+- Hamming distance over token-level labels is a clean, interpretable scoring
+  function. No learned re-ranking model, no additional parameters.
+- The method is closest in spirit to minimum Bayes risk decoding — you're
+  picking the hypothesis most consistent with an external signal rather than
+  the highest-probability output.
+
+SLIDE 9 — Re-Ranking Results: 55-Class Works Best
+- Re-ranking with 55-class GED reaches 54.35 F0.5, vs. 49.80 baseline —
+  a +4.55 gain from a post-hoc inference step with no model changes.
+- Granularity ordering flips vs. fine-tuning: 55 > 25 > 4 > binary.
+- Why? For re-ranking, you need labels that discriminate between similar
+  candidate sentences. Fine-grained labels do that even when they're noisy,
+  because the noise is uncorrelated across candidates.
+- This result has a clean practical implication: if you're doing n-best
+  re-ranking in your pipeline, use the most granular GED labels you can get.
+
+SLIDE 10 — Why Different Granularities Win in Different Roles
+- This is the conceptual core of the paper — the "tale of two systems."
+- Fine-tuning: labels are baked into weights. Noisy labels corrupt the gradient
+  signal. Reliable coarse labels beat unreliable fine-grained ones.
+- Re-ranking: labels are used comparatively. Discrimination between candidates
+  matters more than absolute accuracy. Fine-grained labels win because they
+  separate similar hypotheses even when individually noisy.
+- The underlying principle generalizes: the right representation depends on
+  whether you're training a model (needs clean signal) or making a decision
+  (needs discriminative signal).
+
+SLIDE 11 — Final System and State of the Art
+- Combining 4-class fine-tuning + 55-class re-ranking pushes to 70.6 F0.5
+  on BEA-test — new single-model NMT SOTA, edging past Stahlberg & Kumar's
+  ensemble result (70.4).
+- The additive gains confirm the complementarity claim: the two methods are
+  not overlapping, they're hitting different parts of the error space.
+- Stahlberg & Kumar's result as a reference point is useful for your paper:
+  both this work and your extension live in the same performance range,
+  so the BEA-test / CoNLL-14 benchmarks give you a credible comparison ladder.
+
+SLIDE 12 — Summary
+- Five clean takeaways: ELECTRA is the right encoder for GED; multi-class GED
+  can be injected into GEC as auxiliary input (4-class) or re-ranking signal
+  (55-class); the two methods are complementary; oracle experiments show GED
+  accuracy, not model capacity, is the bottleneck; combined system sets NMT SOTA.
+- For your paper: this is the key precedent for a joint detection-correction
+  architecture. Your contribution differs in that you fuse detection and
+  correction inside a single model (joint head with λ loss weighting) rather
+  than pipelining a separate GED system into GEC.
+- The oracle gap result is worth citing directly — it motivates improving GED
+  accuracy (which your round-trip MT pivot approach addresses) as a path to
+  better correction.

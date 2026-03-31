@@ -1,0 +1,148 @@
+
+SLIDE 2 — Why Arabic GEC is Hard
+- Morphological richness is the dominant challenge. Arabic's inflectional system
+  produces a vocabulary so large that out-of-vocabulary rates dwarf English,
+  which means statistical pattern matching is harder and models need to
+  generalize across morphological paradigms.
+- The diglossia point is underappreciated: even educated native writers mix MSA
+  and dialectal forms. The boundary between "error" and "register choice" is
+  genuinely blurry, which makes annotation expensive and inconsistent.
+- The 40% punctuation error rate is striking — and directly relevant to your
+  work, since ERRANT's punctuation (PUNCT) category is a known noise source in
+  round-trip MT pipelines. Arabic amplifies this problem by an order of magnitude.
+- Data scarcity is the hard constraint that shapes every architectural decision
+  in this paper. Training sets measured in tens of thousands of words force
+  simpler models than English GEC would use.
+
+SLIDE 3 — Three Contributions in One Paper
+- Contribution 1 (Seq2Seq benchmark) fills an obvious gap: nobody had
+  systematically evaluated pretrained Arabic Transformers on GEC before.
+- Contribution 2 (multi-class GED + annotation pipeline) is the most
+  infrastructural — they're building ERRANT for Arabic essentially from scratch.
+- Contribution 3 (GED → GEC study) directly parallels Yuan et al. 2021 in
+  English, making this paper a cross-lingual replication and extension of that
+  work.
+- For your paper: this is the closest analog to what you're doing in Russian,
+  Ukrainian, and Slovene — applying GED-informed GEC methodology to an
+  under-resourced non-English language. The parallel is explicit and citable.
+
+SLIDE 4 — Three Arabic GEC Datasets
+- The dataset split (L1 native vs. L2 learner) matters: L1 errors skew toward
+  spelling and punctuation, L2 errors toward morphology and syntax. Systems
+  trained on one don't transfer cleanly to the other.
+- 25–30% erroneous words is high by GEC standards. English learner corpora
+  typically run 5–15%. This increases recall sensitivity and means F0.5's
+  precision weighting is even more important here.
+- No manual error type annotations in any of the three datasets is the key
+  gap that motivates the annotation pipeline on the next slide. The paper has
+  to build its own supervision signal from scratch.
+- ZAEBUC is the smallest (25K words) and has no prior published results,
+  so any result here establishes the baseline for future work.
+
+SLIDE 5 — Building an Arabic GED Pipeline
+- The edit extraction problem is non-trivial for Arabic because merge and split
+  operations (two words becoming one, or one word splitting into two) are
+  common and break standard Levenshtein alignment.
+- The new iterative greedy algorithm achieves AER 0.00 vs. 0.10–0.16 for
+  prior methods — a clean, near-perfect result that justifies building the
+  whole pipeline on top of it.
+- ARETA is the Arabic equivalent of ERRANT for error type taxonomy, but it
+  had its own alignment issues. Swapping in the new algorithm increases
+  coverage meaningfully.
+- The three granularity levels (2-class, 13-class, 43-class) mirror ERRANT's
+  hierarchical structure and enable the same granularity ablation studies that
+  Yuan et al. ran on English.
+
+SLIDE 6 — GEC Models: Baselines
+- Four baselines before the main models: Morph (rule-based morphological
+  disambiguation), MLE (bigram lookup), ChatGPT (3-shot), and implicitly the
+  pre-Transformer prior SOTA.
+- ChatGPT's performance profile is instructive: highest recall but 38% of
+  mismatches are wrong. GPT-3.5 is overcorrecting and hallucinating — a
+  pattern consistent with its behavior on low-resource tasks generally.
+- MLE has the highest precision of the baselines because it only corrects
+  patterns seen in training. Useful as a conservative upper bound on precision.
+- Morph needs no training data, which makes it valuable as a preprocessing step
+  even when large pretrained models are available — it fills a different part
+  of the error space.
+
+SLIDE 7 — GEC Models: Seq2Seq with GED
+- AraBART (24GB MSA, news-heavy) vs. AraT5 (256GB MSA + Twitter) — AraT5
+  has 10x the pretraining data but AraBART ends up benefiting more from GED.
+  Pretraining scale doesn't dominate here.
+- GED integration is simpler than Yuan et al.: GED predictions become an
+  additional token embedding summed before the encoder, rather than a full
+  second encoder with gating. The simplification is motivated by data scarcity
+  — adding parameters risks overfitting on 25–43K word training sets.
+- Using predicted (not gold) GED tags during training is a deliberate choice
+  to match inference-time noise. This is training-inference consistency and
+  is the right call — otherwise the model learns to rely on cleaner labels
+  than it will ever see at test time.
+- This is directly relevant to your design: your joint head produces predicted
+  tags that feed back into correction. The same training-inference consistency
+  argument applies.
+
+SLIDE 8 — Does Morphological Preprocessing Help?
+- Yes, consistently — and the mechanism is clear: Morph improves recall by
+  helping the model find and fix more errors, at a small precision cost.
+- The QALB-2015-L2 exception is telling: the L2 learner error profile (more
+  morphological and syntactic errors) doesn't align well with what a
+  morphological disambiguator is designed to fix. Domain mismatch between
+  the preprocessor and the error distribution limits the gains.
+- Morph and GED are orthogonal interventions: Morph operates on the input
+  before the model sees it, GED informs the encoder's representation. They
+  address different failure modes and stack cleanly.
+- For your pipeline: you don't have an equivalent morphological preprocessor
+  for Russian/Ukrainian/Slovene, but the principle — that recall-improving
+  preprocessing and error-type-aware encoding are complementary — is worth
+  noting in your related work.
+
+SLIDE 9 — Does GED Help Arabic GEC?
+- Yes, mirroring the English result from Yuan et al. The GED finding
+  generalizes across languages, which strengthens the case that it's a
+  language-agnostic phenomenon rather than an English-specific quirk.
+- AraBART benefits more than AraT5 from GED. Less pretraining data may mean
+  the base model has a weaker prior on error patterns, so the explicit GED
+  signal provides more new information.
+- The gains are modest in absolute terms (79.1 → 79.3 on QALB-14) but
+  consistent across all three datasets. Consistency across domains is the
+  more important result than magnitude.
+- Combining Morph + GED43 gives the best average results (75.3), confirming
+  the complementarity finding from the previous slide.
+
+SLIDE 10 — GED Granularity: No Clear Winner
+- Unlike Yuan et al. (where 4-class won for fine-tuning), no single granularity
+  consistently dominates here. 13-class edges out 43-class by 0.1 on average.
+- The most important number on this slide is not the winner — it's the oracle
+  gap. Oracle GED43 reaches 80.2 avg vs. 75.3 for predicted GED43. That's a
+  ~5 point gap attributable entirely to GED accuracy, echoing the Yuan et al.
+  oracle experiment.
+- Cross-paper consistency of the oracle gap result is strong evidence that
+  improving GED accuracy is the highest-leverage intervention in this class
+  of systems — more valuable than architectural changes or granularity tuning.
+- For your paper: the oracle gap result from both Yuan et al. and Alhafni et al.
+  is a two-citation argument for why better detection (which your round-trip
+  MT pivots improve) should translate to better correction.
+
+SLIDE 11 — State-of-the-Art Results
+- Prior SOTA on QALB-14 (Watson et al. 2018, F1=70.4) is pushed to 79.5 —
+  a 9-point jump, which is large. Most of that comes from the pretrained
+  Transformer, not the GED augmentation.
+- QALB-2015-L2 improvement (73.2 → 77.1) is more modest but still meaningful
+  given how small the training set is.
+- ZAEBUC establishes a new benchmark with no prior comparison point, which
+  means any future work on that dataset will cite this paper as the baseline.
+  That's long-term citation value beyond just the SOTA claims.
+
+SLIDE 12 — Summary
+- Five takeaways that map cleanly onto the three contributions: new edit
+  extraction algorithm, pretrained Seq2Seq models beat prior SOTA, GED
+  generalizes to Arabic, Morph and GED are complementary, oracle gap
+  identifies GED accuracy as the bottleneck.
+- The cross-lingual generalization story is the most important thing for your
+  paper: Alhafni et al. show that the Yuan et al. GED→GEC improvement pattern
+  holds in Arabic. Your work extends this to Russian, Ukrainian, and Slovene —
+  you're adding three more data points to a growing cross-lingual pattern.
+- Cite this paper alongside Yuan et al. whenever you make the claim that
+  multi-class GED improves GEC. Together they cover English + Arabic; your
+  paper adds Slavic languages to that set.

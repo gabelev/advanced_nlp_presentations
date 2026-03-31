@@ -1,0 +1,140 @@
+
+SLIDE 2 — The Problem
+- GEC is a supervised task: you need (ungrammatical, corrected) sentence pairs
+  at scale. Real annotated data is expensive and limited.
+- Prior synthetic approaches do things like randomly swap words or delete tokens.
+  These produce errors that are too simple and too uniform.
+- The downstream effect: a GEC model trained on that data learns shallow
+  heuristics rather than genuine grammatical understanding.
+- Bottom line: the quality and diversity of synthetic errors is the bottleneck,
+  not the quantity.
+
+SLIDE 3 — The Idea
+- The fix is elegant: prepend an ERRANT error-type tag to the input before
+  asking the model to corrupt it.
+- The tag steers the model toward a specific error class (e.g., NOUN:INFL),
+  so you get targeted, realistic corruptions instead of random noise.
+- The example is intuitive — "sheeps" is exactly the kind of plausible,
+  human-like mistake a learner would make, not an artifact of random deletion.
+- ERRANT provides the tag vocabulary (25 categories), so the system is grounded
+  in a well-established error taxonomy.
+
+SLIDE 4 — What is ERRANT?
+- ERRANT does token-level alignment between original and corrected sentences,
+  then classifies each edit into one of 25 error types.
+- It plays two distinct roles in this paper: (1) it generates the tagged
+  training data for the corruption model, and (2) it's used at evaluation time
+  to compute span-based F0.5 scores.
+- F0.5 weights precision twice as heavily as recall — appropriate for GEC,
+  where spurious corrections are worse than missed ones.
+- Knowing the tag taxonomy helps you understand what "diversity" means here:
+  it's not just surface variation, it's coverage across linguistically
+  meaningful error categories.
+
+SLIDE 5 — Two Corruption Model Variants
+- Two architectures are explored: a full-sequence Transformer (tag on input)
+  and Seq2Edits (tag on output, edit-level predictions).
+- Seq2Edits is the better fit because error type prediction is native to its
+  output format — the model is already thinking in terms of edits.
+- The full-sequence model has to implicitly encode the error type in the
+  generated surface form, which is a harder learning problem.
+- This architectural choice matters for the FST constrained decoding discussed
+  on the next slide.
+
+SLIDE 6 — Constraining Seq2Edits with FSTs
+- FSTs let you hard-constrain beam search to produce a specific tag — useful
+  in theory for enforcing tag coverage during data generation.
+- Three FST variants are tested with different permissiveness around the target
+  tag (NoSigma, PostSigma, PrePostSigma).
+- PostSigma is motivated by the "garden-path problem": beam search can commit
+  to an incompatible token early, making the target tag unreachable later.
+  PostSigma fixes this by allowing the target tag to fire at any point, then
+  permitting free generation afterward.
+- Punchline: constrained decoding fails at scale. The final system just uses
+  unconstrained tagged Seq2Edits. The tag is enough signal on its own.
+
+SLIDE 7 — Matching a Target Tag Distribution
+- You have millions of sentences and 25 tags. How do you assign tags so the
+  resulting corpus matches a desired error-type distribution?
+- Three methods: Offline-Optimal (min-cost flow, maximizes model confidence),
+  Offline-Probabilistic (sample tag, find matching sentences), Online (sample
+  tag independently per sentence, O(N)).
+- Offline-Optimal is the theoretical optimum but paradoxically performs worst.
+  Why? Because maximizing model confidence collapses diversity — every
+  VERB:SVA corruption looks the same.
+- Online sampling scales to 200M sentences and performs best. This foreshadows
+  the broader sampling-vs-beam-search theme.
+
+SLIDE 8 — Tagged vs. Untagged: BEA-dev F0.5
+- Anchor points: seed model (no fine-tuning) = 33.7, real parallel data = 50.4.
+  That's the ceiling we're trying to approach with synthetic data.
+- Untagged back-translation gets to 42.4 — a solid baseline but still well
+  below real data.
+- Tagged Seq2Edits + Online reaches 48.0 — closing most of the gap with no
+  real parallel source sentences.
+- The jump from 42.4 → 48.0 is entirely attributable to the tagging mechanism.
+  That's the paper's core empirical result.
+
+SLIDE 9 — Adapting to Native English
+- Native and non-native writers make structurally different errors: natives
+  produce more PUNCT and SPELL errors; non-natives produce more DET errors.
+- By simply re-weighting the tag distribution to match native error patterns,
+  the synthetic corpus adapts to that domain.
+- Result: native-distribution synthetic data (42.9 F0.5) actually beats real
+  parallel data (42.1 F0.5) on the native test set.
+- This is a strong demonstration of the framework's flexibility — tag
+  distributions are a clean knob for domain adaptation without any new data.
+
+SLIDE 10 — What is Beam Search? (Primer)
+- Background slide for audience members unfamiliar with sequence decoding.
+- Beam search keeps the top-k partial sequences at each step. k=1 is greedy;
+  larger k explores more but is still mode-seeking.
+- Key property: beam search always finds the highest-probability output, not a
+  sample from the distribution. That's fine for translation, problematic for
+  diverse data generation.
+- Sets up the next slide's contrast between Stahlberg & Kumar and SeLex-RT.
+
+SLIDE 11 — Beam Search: Two Different Roles
+- This slide draws a direct contrast with SeLex-RT, which is relevant to your
+  own multilingual GEC work.
+- In Stahlberg & Kumar, beam search collapses diversity: every corruption of
+  the same type converges to the same surface form. Sampling fixes this.
+- In SeLex-RT, diversity comes from the pivot language matrix (bg/en/zh), not
+  the decoder. Within each pivot, you want clean, deterministic translation,
+  so beam search is appropriate.
+- Takeaway: the right decoding strategy depends on where diversity is supposed
+  to come from in your pipeline.
+
+SLIDE 12 — Sampling Beats Beam Search
+- Empirical confirmation: sampling during corruption generation improves BEA-dev
+  F0.5 from 52.9 to 54.7 — a meaningful gain from a single decoding change.
+- Intuition: beam search produces the most predictable error, which lets the
+  GEC model learn a surface shortcut rather than the underlying phenomenon.
+  Sampling forces the model to generalize.
+- This mirrors the back-translation literature in MT (Edunov et al., 2018),
+  where noisy/sampled back-translation consistently beats beam search output.
+- Practical implication for your pipeline: if you're generating synthetic
+  corruptions with mBART, consider sampling over beam search.
+
+SLIDE 13 — C4200M and State of the Art
+- Scaling the tagged corruption pipeline to 200M C4 sentences produces a
+  pre-training corpus that sets SOTA at the time on both BEA-test (74.9)
+  and CoNLL-14 (68.3).
+- Previous SOTA (Omelianchuk et al.) used GECToR, a specialized edit-tagging
+  architecture. This work matches and exceeds it with vanilla Transformers.
+- All gains are from data, not architecture. That's the paper's strongest
+  claim: with good synthetic data, you don't need model complexity.
+- For your multilingual work: the C4200M result suggests this approach is
+  scalable — the bottleneck is data quality/diversity, not model size.
+
+SLIDE 14 — Summary
+- Five clean takeaways: (1) error type tags → more realistic/diverse corruptions;
+  (2) tag distribution matching enables domain adaptation; (3) native-distribution
+  synthetic data beats real data on native English; (4) sampling beats beam
+  search; (5) C4200M sets SOTA with no architecture changes.
+- The through-line: structured error taxonomy (ERRANT) + diversity-preserving
+  decoding (sampling) + flexible tag distribution matching = a powerful,
+  domain-adaptable synthetic data pipeline.
+- For your GEC research: this paper is your baseline corruption strategy
+  (Stahlberg & Kumar synthetic corruption), and slides 11-12 directly justify
+  your design choices in the SeLex-RT extension.
